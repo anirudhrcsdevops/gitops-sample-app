@@ -2,7 +2,7 @@ const express = require('express');
 const app = express();
 
 app.get('/', (req, res) => {
-  res.send('Hello from GitOps + ArgoCD 🚀');
+  res.send('Hello from aws codepipeline 🚀');
 });
 
 app.listen(3000, () => {
