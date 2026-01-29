@@ -1,77 +1,33 @@
-image: docker:24.0.5
+image: docker:24
 
 services:
-  - name: docker:dind
-    command: ["--tls=false"]
+  - docker:dind
 
 variables:
   DOCKER_TLS_CERTDIR: ""
-  AWS_REGION: ap-south-1
-  IMAGE_TAG: $CI_COMMIT_SHORT_SHA
-  ECR_URI: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO
 
 stages:
   - build
   - deploy
 
 before_script:
-  # Install required tools
-  - apk add --no-cache aws-cli jq
+  - apk add --no-cache python3 py3-pip
+  - pip3 install awscli
   - aws --version
-  - docker --version
 
-  # Login to Amazon ECR
-  - aws ecr get-login-password --region $AWS_REGION |
-    docker login --username AWS --password-stdin $ECR_URI
-
-# ---------------------------
-# BUILD & PUSH DOCKER IMAGE
-# ---------------------------
 build:
   stage: build
   script:
-    - docker build -t $ECR_URI:$IMAGE_TAG .
-    - docker push $ECR_URI:$IMAGE_TAG
-  only:
-    - main
+    - aws ecr get-login-password --region $AWS_DEFAULT_REGION |
+      docker login --username AWS --password-stdin $ECR_REPO
+    - docker build -t sample-app .
+    - docker tag sample-app:latest $ECR_REPO:latest
+    - docker push $ECR_REPO:latest
 
-# ---------------------------
-# DEPLOY TO ECS
-# ---------------------------
 deploy:
   stage: deploy
   script:
-    - |
-      echo "Fetching current task definition..."
-      TASK_DEF=$(aws ecs describe-task-definition \
-        --task-definition $ECS_TASK_DEFINITION \
-        --query taskDefinition)
-
-      echo "Updating image..."
-      NEW_TASK_DEF=$(echo $TASK_DEF | jq \
-        --arg IMAGE "$ECR_URI:$IMAGE_TAG" \
-        '{
-          family: .family,
-          networkMode: .networkMode,
-          executionRoleArn: .executionRoleArn,
-          taskRoleArn: .taskRoleArn,
-          containerDefinitions: (.containerDefinitions | map(.image=$IMAGE)),
-          requiresCompatibilities: .requiresCompatibilities,
-          cpu: .cpu,
-          memory: .memory
-        }')
-
-      echo "Registering new task definition..."
-      echo $NEW_TASK_DEF > task-def.json
-
-      aws ecs register-task-definition \
-        --cli-input-json file://task-def.json
-
-      echo "Updating ECS service..."
-      aws ecs update-service \
-        --cluster $ECS_CLUSTER \
-        --service $ECS_SERVICE \
-        --task-definition $ECS_TASK_DEFINITION \
-        --force-new-deployment
-  only:
-    - main
+    - aws ecs update-service
+      --cluster $ECS_CLUSTER
+      --service $ECS_SERVICE
+      --force-new-deployment
